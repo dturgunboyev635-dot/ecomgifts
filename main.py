@@ -1,10 +1,12 @@
-from fastapi import FastAPI, HTTPException, Depends, status, File, UploadFile
+import psycopg2
+import psycopg2.extras
+from fastapi import FastAPI, HTTPException, Depends, status, File, UploadFile, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from psycopg2 import IntegrityError
+from pydantic import BaseModel
 from typing import List, Optional
-import sqlite3
 import hashlib
 import jwt
 from datetime import datetime, timedelta
@@ -12,187 +14,106 @@ import os
 import uuid
 import shutil
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Configuration
+# Config
 SECRET_KEY = "your-secret-key-change-this-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
-TELEGRAM_CHANNEL = "@amoragifts"  # Change this to your actual channel
+TELEGRAM_CHANNEL = "@amoragifts"
 
-# Create directories
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("static", exist_ok=True)
 
-# FastAPI app
 app = FastAPI(title="Gift Shop API", description="Backend API for Gift Shop Website")
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with your frontend URL
+    allow_origins=["*"],  # TODO: productionda frontend domenini yoz
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Static files
 app.mount("/static", StaticFiles(directory="uploads"), name="static")
 
-# Security
 security = HTTPBearer()
+load_dotenv()
 
+# DB connection
+def get_db_connection():
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    return conn
 
-# Database initialization
+# DB init
 def init_db():
-    conn = sqlite3.connect('giftshop.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Products table
     cursor.execute('''
-                   CREATE TABLE IF NOT EXISTS products
-                   (
-                       id
-                       INTEGER
-                       PRIMARY
-                       KEY
-                       AUTOINCREMENT,
-                       name
-                       TEXT
-                       NOT
-                       NULL,
-                       description
-                       TEXT,
-                       price
-                       DECIMAL
-                   (
-                       10,
-                       2
-                   ) NOT NULL,
-                       category TEXT,
-                       image_url TEXT,
-                       stock_quantity INTEGER DEFAULT 0,
-                       is_active BOOLEAN DEFAULT 1,
-                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                       )
-                   ''')
+        CREATE TABLE IF NOT EXISTS products (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            description TEXT,
+            price DECIMAL(10,2) NOT NULL,
+            category VARCHAR(255),
+            image_url TEXT,
+            stock_quantity INTEGER DEFAULT 0,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
-    # Admin users table
     cursor.execute('''
-                   CREATE TABLE IF NOT EXISTS admin_users
-                   (
-                       id
-                       INTEGER
-                       PRIMARY
-                       KEY
-                       AUTOINCREMENT,
-                       username
-                       TEXT
-                       UNIQUE
-                       NOT
-                       NULL,
-                       password_hash
-                       TEXT
-                       NOT
-                       NULL,
-                       email
-                       TEXT,
-                       created_at
-                       TIMESTAMP
-                       DEFAULT
-                       CURRENT_TIMESTAMP
-                   )
-                   ''')
+        CREATE TABLE IF NOT EXISTS admin_users (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(100) UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            email VARCHAR(255),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
-    # Categories table
     cursor.execute('''
-                   CREATE TABLE IF NOT EXISTS categories
-                   (
-                       id
-                       INTEGER
-                       PRIMARY
-                       KEY
-                       AUTOINCREMENT,
-                       name
-                       TEXT
-                       UNIQUE
-                       NOT
-                       NULL,
-                       description
-                       TEXT,
-                       created_at
-                       TIMESTAMP
-                       DEFAULT
-                       CURRENT_TIMESTAMP
-                   )
-                   ''')
+        CREATE TABLE IF NOT EXISTS categories (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100) UNIQUE NOT NULL,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
-    # Orders table (for tracking telegram orders)
     cursor.execute('''
-                   CREATE TABLE IF NOT EXISTS orders
-                   (
-                       id
-                       INTEGER
-                       PRIMARY
-                       KEY
-                       AUTOINCREMENT,
-                       customer_name
-                       TEXT,
-                       customer_contact
-                       TEXT,
-                       product_id
-                       INTEGER,
-                       quantity
-                       INTEGER,
-                       total_amount
-                       DECIMAL
-                   (
-                       10,
-                       2
-                   ),
-                       status TEXT DEFAULT 'pending',
-                       telegram_username TEXT,
-                       notes TEXT,
-                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                       FOREIGN KEY
-                   (
-                       product_id
-                   ) REFERENCES products
-                   (
-                       id
-                   )
-                       )
-                   ''')
+        CREATE TABLE IF NOT EXISTS orders (
+            id SERIAL PRIMARY KEY,
+            customer_name VARCHAR(255),
+            customer_contact VARCHAR(255),
+            product_id INTEGER REFERENCES products(id),
+            quantity INTEGER,
+            total_amount DECIMAL(10,2),
+            status VARCHAR(50) DEFAULT 'pending',
+            telegram_username VARCHAR(255),
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
-    # Create default admin user
+    # Default admin
     default_password = hashlib.sha256("admin123".encode()).hexdigest()
     cursor.execute('''
-                   INSERT
-                   OR IGNORE INTO admin_users (username, password_hash, email) 
-        VALUES (?, ?, ?)
-                   ''', ("admin", default_password, "admin@giftshop.com"))
-
-    # Insert sample categories
-    sample_categories = [
-        ("Electronics", "Electronic gadgets and devices"),
-        ("Home & Garden", "Home decoration and garden items"),
-        ("Fashion", "Clothing and accessories"),
-        ("Toys & Games", "Toys and gaming items"),
-        ("Books", "Books and educational materials")
-    ]
-
-    for category in sample_categories:
-        cursor.execute('INSERT OR IGNORE INTO categories (name, description) VALUES (?, ?)', category)
+        INSERT INTO admin_users (username, password_hash, email)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (username) DO NOTHING
+    ''', ("admin", default_password, "admin@giftshop.com"))
 
     conn.commit()
+    cursor.close()
     conn.close()
 
-
-# Initialize database
 init_db()
 
-
-# Pydantic models
+# Models
 class ProductBase(BaseModel):
     name: str
     description: Optional[str] = None
@@ -201,19 +122,8 @@ class ProductBase(BaseModel):
     stock_quantity: int = 0
     is_active: bool = True
 
-
-class ProductCreate(ProductBase):
-    pass
-
-
-class ProductUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    price: Optional[float] = None
-    category: Optional[str] = None
-    stock_quantity: Optional[int] = None
-    is_active: Optional[bool] = None
-
+class ProductCreate(ProductBase): pass
+class ProductUpdate(ProductBase): pass
 
 class Product(ProductBase):
     id: int
@@ -221,31 +131,18 @@ class Product(ProductBase):
     created_at: datetime
     updated_at: datetime
 
-
 class CategoryBase(BaseModel):
     name: str
     description: Optional[str] = None
 
-
-class CategoryCreate(CategoryBase):
-    pass
-
-
+class CategoryCreate(CategoryBase): pass
 class Category(CategoryBase):
     id: int
     created_at: datetime
 
-
 class AdminLogin(BaseModel):
     username: str
     password: str
-
-
-class AdminCreate(BaseModel):
-    username: str
-    password: str
-    email: Optional[str] = None
-
 
 class OrderCreate(BaseModel):
     customer_name: str
@@ -254,7 +151,6 @@ class OrderCreate(BaseModel):
     quantity: int
     telegram_username: Optional[str] = None
     notes: Optional[str] = None
-
 
 class Order(BaseModel):
     id: int
@@ -268,25 +164,15 @@ class Order(BaseModel):
     notes: Optional[str]
     created_at: datetime
 
-
-# Utility functions
-def get_db_connection():
-    conn = sqlite3.connect('giftshop.db')
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
+# Utils
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
-
 
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
@@ -306,40 +192,37 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
 async def root():
     return {"message": "Gift Shop API", "telegram_channel": TELEGRAM_CHANNEL}
 
-
 @app.get("/products/", response_model=List[Product])
 async def get_products(skip: int = 0, limit: int = 100, category: Optional[str] = None):
     conn = get_db_connection()
-    query = "SELECT * FROM products WHERE is_active = 1"
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    query = "SELECT * FROM products WHERE is_active = TRUE"
     params = []
 
     if category:
-        query += " AND category = ?"
+        query += " AND category = %s"
         params.append(category)
 
-    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
     params.extend([limit, skip])
 
-    products = conn.execute(query, params).fetchall()
+    cursor.execute(query, tuple(params))
+    products = cursor.fetchall()
+    cursor.close()
     conn.close()
 
-    return [dict(product) for product in products]
+    return products
 
-
-@app.get("/products/{product_id}", response_model=Product)
-async def get_product(product_id: int):
+@app.get("/categories/", response_model=List[Category])
+async def get_categories():
     conn = get_db_connection()
-    product = conn.execute(
-        "SELECT * FROM products WHERE id = ? AND is_active = 1",
-        (product_id,)
-    ).fetchone()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor.execute("SELECT * FROM categories ORDER BY name")
+    categories = cursor.fetchall()
+    cursor.close()
     conn.close()
-
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-
-    return dict(product)
-
+    return categories
 
 @app.get("/categories/", response_model=List[Category])
 async def get_categories():
@@ -353,36 +236,35 @@ async def get_categories():
 @app.post("/orders/", response_model=dict)
 async def create_order(order: OrderCreate):
     conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # Get product details
-    product = conn.execute(
-        "SELECT * FROM products WHERE id = ? AND is_active = 1",
-        (order.product_id,)
-    ).fetchone()
+    # Get product
+    cursor.execute("SELECT * FROM products WHERE id = %s AND is_active = TRUE", (order.product_id,))
+    product = cursor.fetchone()
 
     if not product:
+        cursor.close()
         conn.close()
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # Check stock
-    if product['stock_quantity'] < order.quantity:
+    if product["stock_quantity"] < order.quantity:
+        cursor.close()
         conn.close()
         raise HTTPException(status_code=400, detail="Insufficient stock")
 
-    # Calculate total amount
-    total_amount = product['price'] * order.quantity
+    total_amount = float(product["price"]) * order.quantity
 
-    # Create order
-    cursor = conn.cursor()
     cursor.execute('''
-                   INSERT INTO orders (customer_name, customer_contact, product_id, quantity,
-                                       total_amount, telegram_username, notes)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ''', (order.customer_name, order.customer_contact, order.product_id,
-                         order.quantity, total_amount, order.telegram_username, order.notes))
+        INSERT INTO orders (customer_name, customer_contact, product_id, quantity,
+                            total_amount, telegram_username, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+    ''', (order.customer_name, order.customer_contact, order.product_id,
+          order.quantity, total_amount, order.telegram_username, order.notes))
 
-    order_id = cursor.lastrowid
+    order_id = cursor.fetchone()["id"]
     conn.commit()
+    cursor.close()
     conn.close()
 
     return {
@@ -395,225 +277,225 @@ async def create_order(order: OrderCreate):
 
 # Auth endpoints
 @app.post("/admin/login")
-async def admin_login(login_data: AdminLogin):
+def admin_login(data: AdminLogin):
     conn = get_db_connection()
-    admin = conn.execute(
-        "SELECT * FROM admin_users WHERE username = ?",
-        (login_data.username,)
-    ).fetchone()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    cursor.execute("SELECT * FROM admin_users WHERE username = %s", (data.username,))
+    admin = cursor.fetchone()
+
+    if not admin:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    if admin["password_hash"] != hash_password(data.password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    token = create_access_token({"sub": admin["username"]})
+    cursor.close()
     conn.close()
+    return {"message": "Login successful", "access_token": token}
 
-    if not admin or admin['password_hash'] != hash_password(login_data.password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    access_token = create_access_token(data={"sub": admin['username']})
-    return {"access_token": access_token, "token_type": "bearer"}
 
 
 # Admin endpoints (protected)
 @app.post("/admin/products/", response_model=Product)
 async def create_product(product: ProductCreate, admin: str = Depends(verify_token)):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     cursor.execute('''
-                   INSERT INTO products (name, description, price, category, stock_quantity, is_active)
-                   VALUES (?, ?, ?, ?, ?, ?)
-                   ''', (product.name, product.description, product.price, product.category,
-                         product.stock_quantity, product.is_active))
+        INSERT INTO products (name, description, price, category, stock_quantity, is_active)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
+    ''', (product.name, product.description, product.price, product.category,
+          product.stock_quantity, product.is_active))
 
-    product_id = cursor.lastrowid
+    product_id = cursor.fetchone()["id"]
     conn.commit()
 
-    # Get the created product
-    new_product = conn.execute(
-        "SELECT * FROM products WHERE id = ?",
-        (product_id,)
-    ).fetchone()
-    conn.close()
+    cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
+    new_product = cursor.fetchone()
 
-    return dict(new_product)
+    cursor.close()
+    conn.close()
+    return new_product
 
 
 @app.put("/admin/products/{product_id}", response_model=Product)
 async def update_product(product_id: int, product_update: ProductUpdate, admin: str = Depends(verify_token)):
     conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # Check if product exists
-    existing_product = conn.execute(
-        "SELECT * FROM products WHERE id = ?",
-        (product_id,)
-    ).fetchone()
+    cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
+    existing_product = cursor.fetchone()
 
     if not existing_product:
+        cursor.close()
         conn.close()
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # Build update query
     update_fields = []
     params = []
 
     for field, value in product_update.dict(exclude_unset=True).items():
-        update_fields.append(f"{field} = ?")
+        update_fields.append(f"{field} = %s")
         params.append(value)
 
     if update_fields:
         params.append(product_id)
-        query = f"UPDATE products SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        conn.execute(query, params)
+        query = f"UPDATE products SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = %s"
+        cursor.execute(query, tuple(params))
         conn.commit()
 
-    # Get updated product
-    updated_product = conn.execute(
-        "SELECT * FROM products WHERE id = ?",
-        (product_id,)
-    ).fetchone()
-    conn.close()
+    cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
+    updated_product = cursor.fetchone()
 
-    return dict(updated_product)
+    cursor.close()
+    conn.close()
+    return updated_product
 
 
 @app.delete("/admin/products/{product_id}")
 async def delete_product(product_id: int, admin: str = Depends(verify_token)):
     conn = get_db_connection()
-
-    result = conn.execute(
-        "UPDATE products SET is_active = 0 WHERE id = ?",
-        (product_id,)
-    )
-
-    if result.rowcount == 0:
+    cursor = conn.cursor()
+    cursor.execute("UPDATE products SET is_active = FALSE WHERE id = %s", (product_id,))
+    if cursor.rowcount == 0:
+        conn.rollback()
+        cursor.close()
         conn.close()
         raise HTTPException(status_code=404, detail="Product not found")
 
     conn.commit()
+    cursor.close()
     conn.close()
-
     return {"message": "Product deleted successfully"}
+
 
 
 @app.post("/admin/upload-image/{product_id}")
 async def upload_product_image(product_id: int, file: UploadFile = File(...), admin: str = Depends(verify_token)):
-    # Validate file type
     if not file.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="File must be an image")
 
-    # Generate unique filename
     file_extension = Path(file.filename).suffix
     unique_filename = f"{uuid.uuid4()}{file_extension}"
     file_path = f"uploads/{unique_filename}"
 
-    # Save file
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # Update product with image URL
     conn = get_db_connection()
+    cursor = conn.cursor()
     image_url = f"/static/{unique_filename}"
+    cursor.execute("UPDATE products SET image_url = %s WHERE id = %s", (image_url, product_id))
 
-    result = conn.execute(
-        "UPDATE products SET image_url = ? WHERE id = ?",
-        (image_url, product_id)
-    )
-
-    if result.rowcount == 0:
+    if cursor.rowcount == 0:
+        conn.rollback()
+        cursor.close()
         conn.close()
-        # Remove uploaded file if product doesn't exist
         os.remove(file_path)
         raise HTTPException(status_code=404, detail="Product not found")
 
     conn.commit()
+    cursor.close()
     conn.close()
-
     return {"message": "Image uploaded successfully", "image_url": image_url}
 
 
 @app.get("/admin/products/", response_model=List[Product])
 async def get_all_products_admin(admin: str = Depends(verify_token)):
     conn = get_db_connection()
-    products = conn.execute("SELECT * FROM products ORDER BY created_at DESC").fetchall()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor.execute("SELECT * FROM products ORDER BY created_at DESC")
+    products = cursor.fetchall()
+    cursor.close()
     conn.close()
-
-    return [dict(product) for product in products]
+    return products
 
 
 @app.get("/admin/orders/", response_model=List[Order])
 async def get_orders(admin: str = Depends(verify_token)):
     conn = get_db_connection()
-    orders = conn.execute("SELECT * FROM orders ORDER BY created_at DESC").fetchall()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor.execute("SELECT * FROM orders ORDER BY created_at DESC")
+    orders = cursor.fetchall()
+    cursor.close()
     conn.close()
-
-    return [dict(order) for order in orders]
+    return orders
 
 
 @app.put("/admin/orders/{order_id}/status")
 async def update_order_status(order_id: int, status: str, admin: str = Depends(verify_token)):
     conn = get_db_connection()
-
-    result = conn.execute(
-        "UPDATE orders SET status = ? WHERE id = ?",
-        (status, order_id)
-    )
-
-    if result.rowcount == 0:
+    cursor = conn.cursor()
+    cursor.execute("UPDATE orders SET status = %s WHERE id = %s", (status, order_id))
+    if cursor.rowcount == 0:
+        conn.rollback()
+        cursor.close()
         conn.close()
         raise HTTPException(status_code=404, detail="Order not found")
 
     conn.commit()
+    cursor.close()
     conn.close()
-
     return {"message": "Order status updated successfully"}
-
 
 @app.post("/admin/categories/", response_model=Category)
 async def create_category(category: CategoryCreate, admin: str = Depends(verify_token)):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     try:
-        cursor.execute(
-            "INSERT INTO categories (name, description) VALUES (?, ?)",
-            (category.name, category.description)
-        )
-        category_id = cursor.lastrowid
+        cursor.execute("INSERT INTO categories (name, description) VALUES (%s, %s) RETURNING id",
+                       (category.name, category.description))
+        category_id = cursor.fetchone()["id"]
         conn.commit()
 
-        new_category = conn.execute(
-            "SELECT * FROM categories WHERE id = ?",
-            (category_id,)
-        ).fetchone()
-        conn.close()
+        cursor.execute("SELECT * FROM categories WHERE id = %s", (category_id,))
+        new_category = cursor.fetchone()
 
-        return dict(new_category)
-    except sqlite3.IntegrityError:
+        cursor.close()
+        conn.close()
+        return new_category
+    except IntegrityError:
+        conn.rollback()
+        cursor.close()
         conn.close()
         raise HTTPException(status_code=400, detail="Category already exists")
-
 
 @app.get("/admin/dashboard/stats")
 async def get_dashboard_stats(admin: str = Depends(verify_token)):
     conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # Get various statistics
-    total_products = conn.execute("SELECT COUNT(*) as count FROM products WHERE is_active = 1").fetchone()['count']
-    total_orders = conn.execute("SELECT COUNT(*) as count FROM orders").fetchone()['count']
-    pending_orders = conn.execute("SELECT COUNT(*) as count FROM orders WHERE status = 'pending'").fetchone()['count']
-    total_revenue = \
-    conn.execute("SELECT COALESCE(SUM(total_amount), 0) as revenue FROM orders WHERE status = 'completed'").fetchone()[
-        'revenue']
+    cursor.execute("SELECT COUNT(*) as count FROM products WHERE is_active = TRUE")
+    total_products = cursor.fetchone()["count"]
 
+    cursor.execute("SELECT COUNT(*) as count FROM orders")
+    total_orders = cursor.fetchone()["count"]
+
+    cursor.execute("SELECT COUNT(*) as count FROM orders WHERE status = 'pending'")
+    pending_orders = cursor.fetchone()["count"]
+
+    cursor.execute("SELECT COALESCE(SUM(total_amount), 0) as revenue FROM orders WHERE status = 'completed'")
+    total_revenue = float(cursor.fetchone()["revenue"])
+
+    cursor.close()
     conn.close()
 
     return {
         "total_products": total_products,
         "total_orders": total_orders,
         "pending_orders": pending_orders,
-        "total_revenue": float(total_revenue),
+        "total_revenue": total_revenue,
         "telegram_channel": TELEGRAM_CHANNEL
     }
 
 
 if __name__ == "__main__":
     import uvicorn
+    import os
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))  # Render PORT beradi, lokalda esa 8000 ishlaydi
+    uvicorn.run(app, host="0.0.0.0", port=port)
