@@ -40,10 +40,12 @@ app.mount("/static", StaticFiles(directory="uploads"), name="static")
 security = HTTPBearer()
 load_dotenv()
 
+
 # DB connection
 def get_db_connection():
     conn = psycopg2.connect(os.environ["DATABASE_URL"])
     return conn
+
 
 # DB init
 def init_db():
@@ -51,67 +53,126 @@ def init_db():
     cursor = conn.cursor()
 
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS products (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            description TEXT,
-            price DECIMAL(10,2) NOT NULL,
-            category VARCHAR(255),
-            image_url TEXT,
-            stock_quantity INTEGER DEFAULT 0,
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+                   CREATE TABLE IF NOT EXISTS products
+                   (
+                       id
+                       SERIAL
+                       PRIMARY
+                       KEY,
+                       name
+                       VARCHAR
+                   (
+                       255
+                   ) NOT NULL,
+                       description TEXT,
+                       price DECIMAL
+                   (
+                       10,
+                       2
+                   ) NOT NULL,
+                       category VARCHAR
+                   (
+                       255
+                   ),
+                       image_url TEXT,
+                       stock_quantity INTEGER DEFAULT 0,
+                       is_active BOOLEAN DEFAULT TRUE,
+                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                       )
+                   ''')
 
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS admin_users (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(100) UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            email VARCHAR(255),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+                   CREATE TABLE IF NOT EXISTS admin_users
+                   (
+                       id
+                       SERIAL
+                       PRIMARY
+                       KEY,
+                       username
+                       VARCHAR
+                   (
+                       100
+                   ) UNIQUE NOT NULL,
+                       password_hash TEXT NOT NULL,
+                       email VARCHAR
+                   (
+                       255
+                   ),
+                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                       )
+                   ''')
 
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS categories (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(100) UNIQUE NOT NULL,
-            description TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+                   CREATE TABLE IF NOT EXISTS categories
+                   (
+                       id
+                       SERIAL
+                       PRIMARY
+                       KEY,
+                       name
+                       VARCHAR
+                   (
+                       100
+                   ) UNIQUE NOT NULL,
+                       description TEXT,
+                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                       )
+                   ''')
 
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS orders (
-            id SERIAL PRIMARY KEY,
-            customer_name VARCHAR(255),
-            customer_contact VARCHAR(255),
-            product_id INTEGER REFERENCES products(id),
-            quantity INTEGER,
-            total_amount DECIMAL(10,2),
-            status VARCHAR(50) DEFAULT 'pending',
-            telegram_username VARCHAR(255),
-            notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+                   CREATE TABLE IF NOT EXISTS orders
+                   (
+                       id
+                       SERIAL
+                       PRIMARY
+                       KEY,
+                       customer_name
+                       VARCHAR
+                   (
+                       255
+                   ),
+                       customer_contact VARCHAR
+                   (
+                       255
+                   ),
+                       product_id INTEGER REFERENCES products
+                   (
+                       id
+                   ),
+                       quantity INTEGER,
+                       total_amount DECIMAL
+                   (
+                       10,
+                       2
+                   ),
+                       status VARCHAR
+                   (
+                       50
+                   ) DEFAULT 'pending',
+                       telegram_username VARCHAR
+                   (
+                       255
+                   ),
+                       notes TEXT,
+                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                       )
+                   ''')
 
     # Default admin
     default_password = hashlib.sha256("admin123".encode()).hexdigest()
     cursor.execute('''
-        INSERT INTO admin_users (username, password_hash, email)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (username) DO NOTHING
-    ''', ("admin", default_password, "admin@giftshop.com"))
+                   INSERT INTO admin_users (username, password_hash, email)
+                   VALUES (%s, %s, %s) ON CONFLICT (username) DO NOTHING
+                   ''', ("admin", default_password, "admin@giftshop.com"))
 
     conn.commit()
     cursor.close()
     conn.close()
 
+
 init_db()
+
 
 # Models
 class ProductBase(BaseModel):
@@ -122,8 +183,12 @@ class ProductBase(BaseModel):
     stock_quantity: int = 0
     is_active: bool = True
 
+
 class ProductCreate(ProductBase): pass
+
+
 class ProductUpdate(ProductBase): pass
+
 
 class Product(ProductBase):
     id: int
@@ -131,18 +196,24 @@ class Product(ProductBase):
     created_at: datetime
     updated_at: datetime
 
+
 class CategoryBase(BaseModel):
     name: str
     description: Optional[str] = None
 
+
 class CategoryCreate(CategoryBase): pass
+
+
 class Category(CategoryBase):
     id: int
     created_at: datetime
 
+
 class AdminLogin(BaseModel):
     username: str
     password: str
+
 
 class OrderCreate(BaseModel):
     customer_name: str
@@ -151,6 +222,7 @@ class OrderCreate(BaseModel):
     quantity: int
     telegram_username: Optional[str] = None
     notes: Optional[str] = None
+
 
 class Order(BaseModel):
     id: int
@@ -164,15 +236,18 @@ class Order(BaseModel):
     notes: Optional[str]
     created_at: datetime
 
+
 # Utils
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
+
 
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
@@ -191,6 +266,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
 @app.get("/")
 async def root():
     return {"message": "Gift Shop API", "telegram_channel": TELEGRAM_CHANNEL}
+
 
 @app.get("/products/", response_model=List[Product])
 async def get_products(skip: int = 0, limit: int = 100, category: Optional[str] = None):
@@ -214,6 +290,24 @@ async def get_products(skip: int = 0, limit: int = 100, category: Optional[str] 
 
     return products
 
+
+@app.get("/products/{product_id}", response_model=Product)
+async def get_product_details(product_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    cursor.execute("SELECT * FROM products WHERE id = %s AND is_active = TRUE", (product_id,))
+    product = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    return product
+
+
 @app.get("/categories/", response_model=List[Category])
 async def get_categories():
     conn = get_db_connection()
@@ -223,6 +317,7 @@ async def get_categories():
     cursor.close()
     conn.close()
     return categories
+
 
 @app.get("/categories/", response_model=List[Category])
 async def get_categories():
@@ -255,12 +350,11 @@ async def create_order(order: OrderCreate):
     total_amount = float(product["price"]) * order.quantity
 
     cursor.execute('''
-        INSERT INTO orders (customer_name, customer_contact, product_id, quantity,
-                            total_amount, telegram_username, notes)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        RETURNING id
-    ''', (order.customer_name, order.customer_contact, order.product_id,
-          order.quantity, total_amount, order.telegram_username, order.notes))
+                   INSERT INTO orders (customer_name, customer_contact, product_id, quantity,
+                                       total_amount, telegram_username, notes)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
+                   ''', (order.customer_name, order.customer_contact, order.product_id,
+                         order.quantity, total_amount, order.telegram_username, order.notes))
 
     order_id = cursor.fetchone()["id"]
     conn.commit()
@@ -296,7 +390,6 @@ def admin_login(data: AdminLogin):
     return {"message": "Login successful", "access_token": token}
 
 
-
 # Admin endpoints (protected)
 @app.post("/admin/products/", response_model=Product)
 async def create_product(product: ProductCreate, admin: str = Depends(verify_token)):
@@ -304,11 +397,10 @@ async def create_product(product: ProductCreate, admin: str = Depends(verify_tok
     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     cursor.execute('''
-        INSERT INTO products (name, description, price, category, stock_quantity, is_active)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id
-    ''', (product.name, product.description, product.price, product.category,
-          product.stock_quantity, product.is_active))
+                   INSERT INTO products (name, description, price, category, stock_quantity, is_active)
+                   VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+                   ''', (product.name, product.description, product.price, product.category,
+                         product.stock_quantity, product.is_active))
 
     product_id = cursor.fetchone()["id"]
     conn.commit()
@@ -370,7 +462,6 @@ async def delete_product(product_id: int, admin: str = Depends(verify_token)):
     cursor.close()
     conn.close()
     return {"message": "Product deleted successfully"}
-
 
 
 @app.post("/admin/upload-image/{product_id}")
@@ -441,6 +532,7 @@ async def update_order_status(order_id: int, status: str, admin: str = Depends(v
     conn.close()
     return {"message": "Order status updated successfully"}
 
+
 @app.post("/admin/categories/", response_model=Category)
 async def create_category(category: CategoryCreate, admin: str = Depends(verify_token)):
     conn = get_db_connection()
@@ -463,6 +555,7 @@ async def create_category(category: CategoryCreate, admin: str = Depends(verify_
         cursor.close()
         conn.close()
         raise HTTPException(status_code=400, detail="Category already exists")
+
 
 @app.get("/admin/dashboard/stats")
 async def get_dashboard_stats(admin: str = Depends(verify_token)):
