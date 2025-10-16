@@ -1,5 +1,6 @@
 import psycopg2
 import psycopg2.extras
+from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException, Depends, status, File, UploadFile, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +18,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Config
-SECRET_KEY = "your-secret-key-change-this-in-production"
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 TELEGRAM_CHANNEL = "@amoragifts"
@@ -27,13 +28,20 @@ os.makedirs("static", exist_ok=True)
 
 app = FastAPI(title="Gift Shop API", description="Backend API for Gift Shop Website")
 
+origins = [
+    "http://innovatex.uz",
+    "https://innovatex.uz",
+    "http://localhost:3000",  # agar localda test qilayotgan bo‘lsang
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: productionda frontend domenini yoz
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 app.mount("/static", StaticFiles(directory="uploads"), name="static")
 
@@ -43,8 +51,8 @@ load_dotenv()
 
 # DB connection
 def get_db_connection():
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    return conn
+    return psycopg2.connect(os.getenv("DATABASE_URL"), cursor_factory=RealDictCursor)
+
 
 
 # DB init
