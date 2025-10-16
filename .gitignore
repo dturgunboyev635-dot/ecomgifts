@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+.env
+
+# FastAPI uploads
+uploads/
+changes/
+
+# Node
+node_modules/
+dist/
+build/
+*.log
+
+# Frontend
+bun.lockb
+*.local
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
