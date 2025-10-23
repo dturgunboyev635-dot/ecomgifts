@@ -29,9 +29,12 @@ os.makedirs("static", exist_ok=True)
 app = FastAPI(title="Gift Shop API", description="Backend API for Gift Shop Website")
 
 origins = [
-    "http://innovatex.uz",
-    "https://innovatex.uz",
+    "http://amorabox.uz",
+    "https://amorabox.uz",
     "http://localhost:3000",  # agar localda test qilayotgan bo‘lsang
+    "http://localhost:5173",
+    "http://localhost:8080",
+
 ]
 
 app.add_middleware(
@@ -42,7 +45,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 app.mount("/static", StaticFiles(directory="uploads"), name="static")
 
 security = HTTPBearer()
@@ -52,7 +54,6 @@ load_dotenv()
 # DB connection
 def get_db_connection():
     return psycopg2.connect(os.getenv("DATABASE_URL"), cursor_factory=RealDictCursor)
-
 
 
 # DB init
